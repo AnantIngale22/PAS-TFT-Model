@@ -1,5 +1,5 @@
 import pandas as pd
-import numpy as np  # ← ADD THIS IMPORT
+import numpy as np
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -14,14 +14,12 @@ import io
 import csv
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-# from dummy_pas_data import generate_dummy_pas_data
 
 from data.database_connector import DatabaseConnector
 from models.tft_model import PASForecaster
 from models.feature_engineering import PASFeatureEngineer
 from api.visualization import create_forecast_charts
 from fastapi.responses import FileResponse
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -43,13 +41,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variables
+
 db_connector = DatabaseConnector()
 forecast_models = {}
 training_jobs = {}
 prediction_cache = {}
 
-# Pydantic models
+
+class PASContractTerms(BaseModel):
+    discount_rate: float = Field(0.15, ge=0.0, le=0.5, description="Discount rate with PAS contracts")
+    rebate_rate: float = Field(0.08, ge=0.0, le=0.2, description="Rebate rate")
+    fee_rate: float = Field(0.03, ge=0.0, le=0.1, description="PAS administration fee rate")
+    include_rebates: bool = Field(True, description="Include rebates in savings calculation")
+    include_fees: bool = Field(True, description="Include PAS fees in net savings")
+
 class ForecastRequest(BaseModel):
     company_id: int = Field(..., description="Company ID to forecast for")
     forecast_type: str = Field("PHYSICIAN", description="Type of forecast: PHYSICIAN, MANUFACTURER, PRODUCT")
@@ -57,6 +62,7 @@ class ForecastRequest(BaseModel):
     periods: int = Field(4, description="Number of periods to forecast", ge=1, le=12)
     confidence_level: float = Field(0.9, description="Confidence level for prediction intervals", ge=0.8, le=0.95)
     use_feature_engineering: bool = Field(True, description="Whether to use advanced feature engineering")
+    pas_terms: PASContractTerms = Field(default_factory=PASContractTerms)
 
 class TrainingRequest(BaseModel):
     company_id: int
@@ -111,29 +117,9 @@ class ReadableForecastResponse(BaseModel):
     model_performance: Dict[str, Any]
     metadata: Dict[str, Any]
 
-# Add to your existing main.py in TFT_Model/
-
-# New Pydantic models for PAS contracts (add to your existing models)
-class PASContractTerms(BaseModel):
-    discount_rate: float = Field(0.15, ge=0.0, le=0.5, description="Discount rate with PAS contracts")
-    rebate_rate: float = Field(0.08, ge=0.0, le=0.2, description="Rebate rate")
-    fee_rate: float = Field(0.03, ge=0.0, le=0.1, description="PAS administration fee rate")
-    include_rebates: bool = Field(True, description="Include rebates in savings calculation")
-    include_fees: bool = Field(True, description="Include PAS fees in net savings")
-
-# Update your existing ForecastRequest model
-class ForecastRequest(BaseModel):
-    company_id: int = Field(..., description="Company ID to forecast for")
-    forecast_type: str = Field("PHYSICIAN", description="Type of forecast: PHYSICIAN, MANUFACTURER, PRODUCT")
-    entity_ids: Optional[List[int]] = Field(None, description="Specific entity IDs to forecast")
-    periods: int = Field(4, description="Number of periods to forecast", ge=1, le=12)
-    confidence_level: float = Field(0.9, description="Confidence level for prediction intervals", ge=0.8, le=0.95)
-    use_feature_engineering: bool = Field(True, description="Whether to use advanced feature engineering")
-    pas_terms: PASContractTerms = Field(default_factory=PASContractTerms)  # NEW
 
 
 
-# Utility functions
 def get_model_key(company_id: int, forecast_type: str) -> str:
     return f"{company_id}_{forecast_type.upper()}"
 
@@ -167,7 +153,7 @@ def train_model_background(job_id: str, company_id: int, forecast_type: str,
 
         logger.info(f"Starting background training job {job_id} for company {company_id}")
 
-        # Load data
+
         data = get_training_data(company_id, forecast_type, years_of_history)
         if data.empty:
             training_jobs[job_id].update({
@@ -177,11 +163,11 @@ def train_model_background(job_id: str, company_id: int, forecast_type: str,
             })
             return
 
-        # Initialize and train model
+
         forecaster = PASForecaster(company_id=company_id)
         model = forecaster.train(data, use_feature_engineering=use_feature_engineering)
 
-        # Save model for later forecasts
+
         forecast_models[f"{company_id}_{forecast_type}"] = forecaster
 
         training_jobs[job_id].update({
@@ -202,7 +188,7 @@ def train_model_background(job_id: str, company_id: int, forecast_type: str,
         })
 
 
-# API Routes
+
 @app.get("/", include_in_schema=False)
 async def root():
     return {"message": "PAS Forecasting API", "version": "1.0.0"}
@@ -287,15 +273,15 @@ async def get_company_stats(company_id: int):
 async def start_training(request: TrainingRequest, background_tasks: BackgroundTasks):
     """Start model training in background"""
     try:
-        # Check if data exists
+
         data = get_training_data(request.company_id, request.forecast_type, request.years_of_history)
         if data.empty:
             raise HTTPException(status_code=404, detail="No training data available")
         
-        # Generate job ID
+
         job_id = str(uuid.uuid4())
         
-        # Start background training
+
         background_tasks.add_task(
             train_model_background,
             job_id,
@@ -339,19 +325,19 @@ async def generate_forecast(request: ForecastRequest):
         if model_key not in forecast_models:
             raise HTTPException(status_code=404, detail="No trained model found")
         
-        # Get data based on forecast type
+
         data = get_training_data(request.company_id, request.forecast_type, years=2)
         
         if data.empty:
             raise HTTPException(status_code=404, detail="No data available")
         
-        # Get entity name mapping based on forecast type
+
         if request.forecast_type == "MANUFACTURER":
             entity_names = data.groupby('entity_id')['manufacturer_name'].first().to_dict()
         else:
             entity_names = data.groupby('entity_id')['entity_name'].first().to_dict()
         
-        # Filter entities if specified
+
         if request.entity_ids:
             available_entities = data['entity_id'].unique()
             valid_entities = set(request.entity_ids).intersection(set(available_entities))
@@ -359,25 +345,25 @@ async def generate_forecast(request: ForecastRequest):
         else:
             valid_entities = data['entity_id'].unique()
         
-        # Generate predictions
+
         forecaster = forecast_models[model_key]
         predictions = forecaster.predict(data, periods=request.periods)
         
-        # Debug logging
+
         logger.info(f"Predictions shape: point_forecasts={len(predictions['point_forecasts'])}, entities={len(valid_entities)}, periods={request.periods}")
         logger.info(f"Expected total predictions: {len(valid_entities) * request.periods}")
         
-        # Get model evaluation - THIS IS WHERE ACCURACY SHOULD BE CALCULATED
+
         model_info = forecaster.evaluate(data)  # This should return accuracy metrics
         
-        # If evaluate() doesn't return metrics, calculate them here:
+
         if 'mean_absolute_error' not in model_info.get('metrics', {}):
-            # Calculate accuracy metrics manually
+
             from sklearn.metrics import mean_absolute_error, mean_squared_error
             import numpy as np
             
-            # You'll need actual vs predicted values from your model
-            # This depends on how your forecaster works
+
+
             actual_values = data['spend_amount'].values  # or whatever your target column is
             predicted_values = predictions['point_forecasts']  # or however you get predictions
             
@@ -387,10 +373,10 @@ async def generate_forecast(request: ForecastRequest):
             mean_target = np.mean(actual_values)
             std_target = np.std(actual_values)
             
-            # Calculate accuracy percentage
+
             accuracy_percentage = max(0, 100 - (mae / mean_target * 100))
             
-            # Add to model_info
+
             model_info = {
                 "model_type": forecaster.model_type,
                 "company_id": request.company_id,
@@ -411,7 +397,7 @@ async def generate_forecast(request: ForecastRequest):
                 "model_version": "1.0"
             }
         
-        # Create readable forecast data
+
         readable_forecasts = create_readable_forecasts(
             predictions, valid_entities, entity_names, request.periods, request.pas_terms.dict(), request.forecast_type
         )
@@ -437,7 +423,7 @@ async def generate_forecast(request: ForecastRequest):
             }
         )
         
-        # Cache the prediction
+
         prediction_cache[forecast_id] = {"response": response.dict()}
         
         return response
@@ -453,13 +439,13 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
     lower_bounds = predictions['confidence_intervals']['lower']
     upper_bounds = predictions['confidence_intervals']['upper']
     
-    # Debug logging to understand prediction structure
+
     logger.info(f"DEBUG: point_forecasts length: {len(point_forecasts)}")
     logger.info(f"DEBUG: entity_ids: {entity_ids}")
     logger.info(f"DEBUG: periods: {periods}")
     logger.info(f"DEBUG: expected total predictions: {len(entity_ids) * periods}")
     
-    # Default PAS terms if not provided
+
     if pas_terms is None:
         pas_terms = {
             'discount_rate': 0.15,
@@ -469,7 +455,7 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
             'include_fees': True
         }
     
-    # Use dynamic PAS terms
+
     PAS_DISCOUNT_RATE = pas_terms.get('discount_rate', 0.15)
     PAS_REBATE_RATE = pas_terms.get('rebate_rate', 0.08) if pas_terms.get('include_rebates', True) else 0.0
     PAS_FEE_RATE = pas_terms.get('fee_rate', 0.03) if pas_terms.get('include_fees', True) else 0.0
@@ -497,7 +483,7 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
         "period_breakdown": []
     }
     
-    # Create physician-level forecasts with financial impact
+
     for entity_id in entity_ids:
         physician_forecast = {
             "physician_id": entity_id,
@@ -521,7 +507,7 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
         
         entity_forecasts = []
         for period in range(periods):
-            # FIX: Generate unique predictions per physician
+
             np.random.seed(int(entity_id) * 1000 + period * 100)
             base_prediction = point_forecasts[0] if point_forecasts else 12000
             physician_multiplier = 0.7 + (int(entity_id) % 20) * 0.03  # Wider range
@@ -532,7 +518,7 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
             low_spend = base_spend * np.random.uniform(0.85, 0.95)
             high_spend = base_spend * np.random.uniform(1.05, 1.15)
             
-            # Calculate financial impact for this period
+
             spend_with_pas_low = low_spend * (1 - PAS_DISCOUNT_RATE)
             spend_with_pas_base = base_spend * (1 - PAS_DISCOUNT_RATE)
             spend_with_pas_high = high_spend * (1 - PAS_DISCOUNT_RATE)
@@ -559,7 +545,7 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
                     "range": round(high_spend - low_spend, 2)
                 },
                 "is_high_confidence": (high_spend - low_spend) < 5000,
-                # Add financial metrics
+
                 "financial_impact": {
                     "spend_with_pas_low": round(spend_with_pas_low, 2),
                     "spend_with_pas_base": round(spend_with_pas_base, 2),
@@ -577,7 +563,7 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
             physician_forecast["period_forecasts"].append(forecast_data)
             entity_forecasts.append(base_spend)
             
-            # Accumulate physician financial totals
+
             physician_forecast["financial_impact"]["total_spend_with_pas_low"] += spend_with_pas_low
             physician_forecast["financial_impact"]["total_spend_with_pas_base"] += spend_with_pas_base
             physician_forecast["financial_impact"]["total_spend_with_pas_high"] += spend_with_pas_high
@@ -589,14 +575,14 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
             physician_forecast["financial_impact"]["total_pas_fees"] += pas_fees
             physician_forecast["financial_impact"]["total_net_savings"] += net_savings
         
-        # Round physician financial totals
+
         for key in physician_forecast["financial_impact"]:
             physician_forecast["financial_impact"][key] = round(physician_forecast["financial_impact"][key], 2)
         
         physician_forecast["total_forecasted"] = round(sum(entity_forecasts), 2)
         physician_forecast["average_forecast"] = round(np.mean(entity_forecasts), 2)
         
-        # Better trend calculation - use linear regression slope
+
         if len(entity_forecasts) > 1:
             x = np.arange(len(entity_forecasts))
             slope = np.polyfit(x, entity_forecasts, 1)[0]
@@ -611,7 +597,7 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
         
         readable_data["entity_forecasts"].append(physician_forecast)
     
-    # Create financial summary across all physicians
+
     total_base_spend = sum(point_forecasts)
     total_low_spend = sum(lower_bounds)
     total_high_spend = sum(upper_bounds)
@@ -629,9 +615,9 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
         "total_net_savings": round(total_base_spend * (PAS_DISCOUNT_RATE + PAS_REBATE_RATE - PAS_FEE_RATE), 2)
     }
     
-    # Create period-level breakdown with financials
+
     for period in range(periods):
-        # Fix: Calculate period totals by summing across all physicians for each period
+
         period_base = 0
         period_low = 0
         period_high = 0
@@ -647,7 +633,7 @@ def create_readable_forecasts(predictions, entity_ids, entity_names, periods, pa
             "total_forecast": round(period_base, 2),
             "physician_count": len(entity_ids),
             "average_physician_forecast": round(period_base / len(entity_ids), 2),
-            # Add financial breakdown per period
+
             "financial_impact": {
                 "spend_with_pas_low": round(period_low * (1 - PAS_DISCOUNT_RATE), 2),
                 "spend_with_pas_base": round(period_base * (1 - PAS_DISCOUNT_RATE), 2),
@@ -684,7 +670,7 @@ def get_highest_spender(readable_data):
     if not readable_data:
         return "N/A"
     
-    # Group by physician and sum their forecasts
+
     physician_totals = {}
     for record in readable_data:
         physician_id = record['Physician ID']
@@ -693,7 +679,7 @@ def get_highest_spender(readable_data):
     
     if physician_totals:
         max_physician = max(physician_totals, key=physician_totals.get)
-        # Find the name of the highest spender
+
         max_record = next(record for record in readable_data if record['Physician ID'] == max_physician)
         return f"{max_record['Physician Name']} - ${physician_totals[max_physician]:,.2f}"
     
@@ -767,18 +753,18 @@ def export_enhanced_excel_forecast(forecast_id: str):  # Remove async
         
         forecast_data = prediction_cache[forecast_id]["response"]
         
-        # Get physician names
+
         data = get_training_data(forecast_data['company_id'], forecast_data['forecast_type'], years=1)
         physician_names = data.groupby('entity_id')['entity_name'].first().to_dict()
         
-        # Create workbook with styling
+
         output = BytesIO()
         workbook = Workbook()
         
-        # Remove default sheet
+
         workbook.remove(workbook.active)
         
-        # Create formatted sheets
+
         _create_forecasts_sheet(workbook, forecast_data, physician_names)
         _create_executive_summary_sheet(workbook, forecast_data)
         _create_physician_summary_sheet(workbook, forecast_data, physician_names)
@@ -806,7 +792,7 @@ def _create_forecasts_sheet(workbook, forecast_data, physician_names):
     """Create beautifully formatted forecasts sheet"""
     sheet = workbook.create_sheet("Physician Forecasts")
     
-    # Styles
+
     header_font = Font(bold=True, color="FFFFFF", size=12)
     header_fill = PatternFill(start_color="2E86AB", end_color="2E86AB", fill_type="solid")
     money_font = Font(color="1B5E20")
@@ -815,7 +801,7 @@ def _create_forecasts_sheet(workbook, forecast_data, physician_names):
                    top=Side(style='thin'), bottom=Side(style='thin'))
     center_align = Alignment(horizontal='center', vertical='center')
     
-    # Headers
+
     headers = [
         'Physician ID', 'Physician Name', 'Forecast Period', 
         'Expected Spending', 'Conservative Estimate', 'Optimistic Estimate',
@@ -829,11 +815,11 @@ def _create_forecasts_sheet(workbook, forecast_data, physician_names):
         cell.border = border
         cell.alignment = center_align
     
-    # Handle both old and new forecast data structures
+
     if 'physician_forecasts' in forecast_data['predictions']:
         physician_forecasts = forecast_data['predictions']['physician_forecasts']
     else:
-        # Fallback: create from basic structure
+
         physician_forecasts = [{
             'physician_id': i+1,
             'physician_name': f'Physician {i+1}',
@@ -857,7 +843,7 @@ def _create_forecasts_sheet(workbook, forecast_data, physician_names):
             upper_bound = period_data['confidence_interval']['upper']
             confidence_range = period_data['confidence_interval']['range']
             
-            # Determine risk level
+
             if confidence_range > 8000:
                 risk_level = "High"
                 risk_color = alert_font
@@ -884,11 +870,11 @@ _get_business_recommendation(point_forecast, confidence_range)
                 cell = sheet.cell(row=row_num, column=col, value=value)
                 cell.border = border
                 
-                # Style money columns
+
                 if col in [4, 5, 6, 7]:
                     cell.font = money_font
                     cell.alignment = Alignment(horizontal='right')
-                elif col == 8:  # Risk level
+                elif col == 8:
                     cell.font = risk_color
                     cell.alignment = center_align
                 else:
@@ -896,7 +882,7 @@ _get_business_recommendation(point_forecast, confidence_range)
             
             row_num += 1
     
-    # Auto-adjust column widths
+
     for column in sheet.columns:
         max_length = 0
         column_letter = column[0].column_letter
@@ -913,11 +899,11 @@ def _create_executive_summary_sheet(workbook, forecast_data):
     """Create executive summary with key insights"""
     sheet = workbook.create_sheet("Executive Summary")
     
-    # Title
+
     title_cell = sheet.cell(row=1, column=1, value="PAS FORECASTING REPORT")
     title_cell.font = Font(bold=True, size=16, color="2E86AB")
     
-    # Handle summary data
+
     summary = forecast_data['predictions'].get('summary', {
         'total_forecast_amount': 50000,
         'average_confidence_range': 2500
@@ -928,7 +914,7 @@ def _create_executive_summary_sheet(workbook, forecast_data):
     mae = metrics_data['mean_absolute_error']
     overall_accuracy = max(0, 100 - (mae / mean_target * 100))
 
-    # Key metrics box with accuracy highlight
+
     metrics = [
         ["REPORT SUMMARY", ""],
         ["Generated", forecast_data['generated_at'][:19].replace('T', ' ')],  # Format datetime
@@ -937,7 +923,7 @@ def _create_executive_summary_sheet(workbook, forecast_data):
         ["", ""],
         ["KEY METRICS", ""],
         ["Total Forecasted", f"${summary['total_forecast_amount']:,.0f}"],
-        ["Model Accuracy", f"{overall_accuracy:.1f}%"],  # HIGHLIGHT ACCURACY
+        ["Model Accuracy", f"{overall_accuracy:.1f}%"],
         ["Forecast Confidence", "90%"],
         ["Physicians Forecasted", forecast_data['metadata']['total_entities']],
         ["Forecast Periods", forecast_data['metadata']['total_periods_forecasted']],
@@ -963,7 +949,7 @@ def _create_physician_summary_sheet(workbook, forecast_data, physician_names):
     for col, header in enumerate(headers, 1):
         sheet.cell(row=1, column=col, value=header).font = Font(bold=True)
     
-    # Handle physician forecasts
+
     physician_forecasts = forecast_data['predictions'].get('physician_forecasts', [])
     if not physician_forecasts:
         physician_forecasts = [{
@@ -980,7 +966,7 @@ def _create_physician_summary_sheet(workbook, forecast_data, physician_names):
         avg_monthly = physician['average_forecast']
         trend = physician['trend']
         
-        # Determine trend display and color
+
         if trend == "increasing":
             trend_display = "↑ Increasing"
             trend_color = Font(color="4CAF50", bold=True)
@@ -991,7 +977,7 @@ def _create_physician_summary_sheet(workbook, forecast_data, physician_names):
             trend_display = "→ Stable"
             trend_color = Font(color="FF9800", bold=True)
         
-        # Spending tier
+
         if avg_monthly > 12000:
             tier = "Platinum"
             action = "Strategic review"
@@ -1016,7 +1002,7 @@ def _create_physician_summary_sheet(workbook, forecast_data, physician_names):
         
         for col, value in enumerate(data, 1):
             cell = sheet.cell(row=row, column=col, value=value)
-            if col == 4:  # Trend column
+            if col == 4:
                 cell.font = trend_color
         
         row += 1
@@ -1028,20 +1014,20 @@ def _create_model_performance_sheet(workbook, forecast_data):
     metrics = forecast_data['model_info']['metrics']
     mean_target = metrics['mean_target_value']
     
-    # Calculate accuracy percentages
+
     mae = metrics['mean_absolute_error']
     rmse = metrics['root_mean_squared_error']
     
-    # MAE as percentage of mean (more stable)
+
     mae_accuracy_pct = max(0, 100 - (mae / mean_target * 100))
     
-    # RMSE as percentage of mean 
+
     rmse_accuracy_pct = max(0, 100 - (rmse / mean_target * 100))
     
-    # Overall accuracy (weighted average)
+
     overall_accuracy = (mae_accuracy_pct * 0.7 + rmse_accuracy_pct * 0.3)
     
-    # Determine accuracy rating
+
     if overall_accuracy >= 95:
         accuracy_rating = "EXCELLENT"
         rating_color = Font(color="4CAF50", bold=True)
@@ -1089,29 +1075,29 @@ def _create_model_performance_sheet(workbook, forecast_data):
         if value:
             value_cell = sheet.cell(row=row, column=2, value=value)
             
-            # Style the accuracy rating
+
             if label == "YOUR MODEL RATING":
                 value_cell.font = rating_color
                 value_cell.alignment = Alignment(horizontal='center')
             elif label == "Overall Model Accuracy":
                 value_cell.font = Font(bold=True, size=12, color="2E86AB")
     
-    # Add a visual accuracy gauge
+
     _add_accuracy_gauge(sheet, overall_accuracy, len(performance_data) + 2)
 
 def _add_accuracy_gauge(sheet, accuracy, start_row):
     """Add a simple visual accuracy gauge"""
     sheet.cell(row=start_row, column=1, value="ACCURACY GAUGE").font = Font(bold=True)
     
-    # Create a simple text-based gauge
-    gauge_cells = 10  # 10 cells for 0-100%
+
+    gauge_cells = 10
     filled_cells = int((accuracy / 100) * gauge_cells)
     
     gauge_row = start_row + 1
     for i in range(gauge_cells):
         cell = sheet.cell(row=gauge_row, column=1 + i)
         if i < filled_cells:
-            # Filled portion
+
             if accuracy >= 90:
                 cell.fill = PatternFill(start_color="4CAF50", end_color="4CAF50", fill_type="solid")
             elif accuracy >= 80:
@@ -1119,14 +1105,14 @@ def _add_accuracy_gauge(sheet, accuracy, start_row):
             else:
                 cell.fill = PatternFill(start_color="F44336", end_color="F44336", fill_type="solid")
         else:
-            # Empty portion
+
             cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
         
         cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), 
                            top=Side(style='thin'), bottom=Side(style='thin'))
         cell.value = ""
     
-    # Add percentage label
+
     sheet.cell(row=gauge_row, column=gauge_cells + 2, value=f"{accuracy:.1f}%").font = Font(bold=True)
 def _get_business_recommendation(point_forecast, confidence_range):
     """Get specific business recommendations"""

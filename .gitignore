@@ -31,7 +31,9 @@ ENV/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# PyTorch Lightning logs
+# Logs and outputs
+logs/
+outputs/
 lightning_logs/
 
 # IDE
@@ -52,5 +54,6 @@ Thumbs.db
 *.ckpt
 *.pth
 
-# Logs
+# Log files
 *.log
+forecasting.log

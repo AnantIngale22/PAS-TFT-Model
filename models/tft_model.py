@@ -44,14 +44,14 @@ class PASForecaster:
             # Prepare data for TFT
             training_dataset = self.prepare_data(data, use_feature_engineering)
             
-            # Create dataloaders with smaller batch size
+
             train_dataloader = training_dataset.to_dataloader(
                 train=True, 
-                batch_size=8,  # Smaller batch size
+                batch_size=8,
                 num_workers=0
             )
             
-            # Initialize TFT model
+
             self.model = TemporalFusionTransformer.from_dataset(
                 training_dataset,
                 learning_rate=Config.LEARNING_RATE,
@@ -65,9 +65,9 @@ class PASForecaster:
                 logging_metrics=[RMSE()],
             )
             
-            # Setup trainer with minimal epochs for faster execution
+
             self.trainer = pl.Trainer(
-                max_epochs=1,  # Reduce from Config.MAX_EPOCHS
+                max_epochs=1,
                 accelerator="cpu",
                 devices=1,
                 enable_model_summary=False,
@@ -77,7 +77,7 @@ class PASForecaster:
                 enable_progress_bar=False
             )
             
-            # Train model
+
             self.trainer.fit(
                 self.model,
                 train_dataloader
@@ -106,11 +106,11 @@ class PASForecaster:
             data_processed['month'] = data_processed['timestamp'].dt.month
             data_processed['year'] = data_processed['timestamp'].dt.year
         
-        # Ensure required columns exist
+
         if 'time_idx' not in data_processed.columns:
             data_processed['time_idx'] = data_processed.groupby('entity_id').cumcount()
         
-        # Create the TFT dataset with minimal requirements
+
         self.training_dataset = TimeSeriesDataSet(
             data_processed,
             time_idx="time_idx",
@@ -119,7 +119,7 @@ class PASForecaster:
             min_encoder_length=1,
             max_encoder_length=min(3, len(data_processed) // 2),  # Adaptive length
             min_prediction_length=1,
-            max_prediction_length=1,  # Reduce to 1
+            max_prediction_length=1,
             static_categoricals=[],
             static_reals=[],
             time_varying_known_categoricals=[],
@@ -130,7 +130,7 @@ class PASForecaster:
                 groups=["entity_id"], 
                 transformation="softplus"
             ),
-            add_relative_time_idx=False,  # Disable to reduce complexity
+            add_relative_time_idx=False,
             add_target_scales=False,
             add_encoder_length=False,
         )
@@ -147,7 +147,7 @@ class PASForecaster:
             raise ValueError("Model is not initialized")
         
         try:
-            # Prepare data using same feature engineering
+
             if self.feature_engineer:
                 df_processed = self.feature_engineer.prepare_features(data)
             else:
@@ -158,7 +158,7 @@ class PASForecaster:
                 df_processed['month'] = df_processed['timestamp'].dt.month
                 df_processed['year'] = df_processed['timestamp'].dt.year
             
-            # Create prediction dataset
+
             prediction_dataset = TimeSeriesDataSet.from_dataset(
                 self.training_dataset, 
                 df_processed, 
@@ -166,17 +166,17 @@ class PASForecaster:
                 stop_randomization=True
             )
             
-            # Generate predictions with entity grouping preserved
+
             prediction_dataloader = prediction_dataset.to_dataloader(
                 train=False, 
-                batch_size=1,  # Process one sample at a time to preserve entity order
+                batch_size=1,
                 num_workers=0
             )
             
             raw_predictions = self.model.predict(prediction_dataloader, return_y=True)
             predictions = raw_predictions[0].cpu().numpy()
             
-            # Extract predictions maintaining entity order
+
             if predictions.shape[1] == 7:
                 point_forecasts = predictions[:, 3].tolist()
                 lower_bounds = predictions[:, 1].tolist()
@@ -203,7 +203,7 @@ class PASForecaster:
             
         except Exception as e:
             logger.error(f"TFT prediction failed: {e}")
-            # Use fallback with entity-specific variation
+
             entities = data['entity_id'].unique()
             fallback_preds = []
             for entity_id in entities:

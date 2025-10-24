@@ -2,7 +2,7 @@ import logging
 import argparse
 from data.database_connector import DatabaseConnector
 from models.tft_model import PASForecaster
-from api.fastapi_server import app , PASContractTerms, create_readable_forecasts
+from api.fastapi_server import app, PASContractTerms, create_readable_forecasts
 import uvicorn
 
 
@@ -11,7 +11,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('forecasting.log'),
+        logging.FileHandler('logs/forecasting.log'),
         logging.StreamHandler()
     ]
 )
@@ -38,22 +38,18 @@ def train_model(company_id=None):
     logger.info(f"🚀 Starting PAS Forecasting Module")
     logger.info("Using database: anantingale@localhost:5432/forecast_model")
     
-    # 1. Connect to database
     db = DatabaseConnector()
     if not db.test_connection():
         logger.error("❌ Cannot proceed without database connection")
         return
     
-    # 2. List companies if no company_id provided
     if company_id is None:
         companies = list_companies()
         if companies is None or companies.empty:
             return
-        # Use first company by default
         company_id = companies.iloc[0]['company_id']
         logger.info(f"Using company ID: {company_id}")
     
-    # 3. Get data
     logger.info("📊 Loading purchase data...")
     data = db.get_purchase_data(company_id)
     
@@ -65,20 +61,17 @@ def train_model(company_id=None):
     logger.info(f"📈 Time range: {data['timestamp'].min()} to {data['timestamp'].max()}")
     logger.info(f"👥 Unique entities: {data['entity_id'].nunique()}")
     
-    # 4. Train model
     logger.info("🤖 Training TFT model...")
     forecaster = PASForecaster(company_id)
     model = forecaster.train(data)
     
     logger.info("✅ Training completed successfully!")
     
-    # 5. Generate sample predictions
     logger.info("🔮 Generating sample predictions...")
     predictions = forecaster.predict(data)
     
     logger.info("🎯 Forecast generation completed!")
     
-    # 6. Show evaluation
     evaluation = forecaster.evaluate(data)
     logger.info("📊 Model Evaluation:")
     for key, value in evaluation.items():
@@ -106,7 +99,7 @@ def main():
     elif args.mode == 'api':
         start_api_server()
     elif args.mode == 'test':
-        from test_connection import test_all
+        from tests.test_connection import test_all
         test_all()
     elif args.mode == 'list':
         list_companies()
